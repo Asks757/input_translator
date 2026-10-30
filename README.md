@@ -6,10 +6,11 @@
 
 ## 功能
 
-- `Ctrl+Shift+F` 呼出或关闭悬浮窗。
+- `Ctrl+Shift+T` 呼出或关闭悬浮窗。
 - `Ctrl+Enter` 翻译并回填到原输入框；`Esc` 关闭悬浮窗。
-- 成功回填后自动清空悬浮窗，并恢复原剪贴板内容。
+- 成功回填后自动清空悬浮窗，并恢复原剪贴板文本。
 - 圆角深色悬浮窗、透明度调节、浅色设置界面和系统托盘。
+- Windows 使用原生 Unicode 剪贴板，并尝试将悬浮窗排除在截图和录屏之外（需要系统支持）。
 - 支持多种国内可直接访问的翻译服务。
 - 可选在本机保存凭据，无需每次重新填写。
 
@@ -46,7 +47,7 @@ Deepin Linux 运行：
 
 首次启动时，启动脚本会创建项目内的 `.venv` 并安装依赖，然后启动程序。
 
-Windows 的 `run.bat` 会优先通过 Python Launcher（`py -3`）查找 Python；不可用时回退到 `python` 命令，因此两者至少有一个可用即可。创建虚拟环境、安装依赖或程序运行失败时，脚本会显示错误并暂停，双击启动也能看到具体原因。
+Windows 的 `run.bat` 会优先通过 Python Launcher（`py -3`）查找 Python；不可用时回退到 `python` 命令，因此两者至少有一个可用即可。创建虚拟环境或安装依赖失败时，脚本会显示错误并暂停，双击启动也能看到具体原因。准备完成后，脚本通过 `pythonw.exe` 在后台启动应用，不保留命令行窗口；若需要查看应用自身的启动报错，可改用下方的手动方式运行。
 
 也可以手动运行。Windows：
 
@@ -67,11 +68,13 @@ python3 -m venv .venv
 ## 使用方法
 
 1. 在设置窗口选择翻译服务，并填写对应凭据。
-2. 点击要使用的中文输入框，按 `Ctrl+Shift+F`。
+2. 点击要使用的中文输入框，按 `Ctrl+Shift+T`。
 3. 在悬浮窗中输入中文，按 `Ctrl+Enter`。
 4. 译文会自动粘贴到原输入框，悬浮窗随后清空。
 
-如果没有找到原输入窗口，程序会把译文复制到剪贴板，并保留悬浮窗中的原文，供手动粘贴。
+程序会在回填前检查原输入窗口是否获得焦点，并在需要时重试激活。如果没有找到原输入窗口，或重试后仍无法切回原窗口，程序会把译文复制到剪贴板，并保留悬浮窗中的原文，供手动粘贴。
+
+剪贴板备份和恢复目前仅支持文本；图片、文件等非文本剪贴板内容不会在回填后恢复。
 
 ## 配置翻译服务
 
@@ -114,7 +117,7 @@ python3 -m venv .venv
 | `TRANSLATOR_BAIDU_APP_ID` | 临时提供百度 APP ID |
 | `TRANSLATOR_MODEL` | 覆盖模型名称 |
 | `TRANSLATOR_BASE_URL` | 覆盖接口地址 |
-| `TRANSLATOR_HOTKEY` | 覆盖全局快捷键，默认 `<ctrl>+<shift>+f` |
+| `TRANSLATOR_HOTKEY` | 覆盖全局快捷键，默认 `<ctrl>+<shift>+t` |
 | `TRANSLATOR_START_HIDDEN=1` | 托盘可用时启动即收进托盘 |
 | `TRANSLATOR_FRAMELESS=0` | 禁用无边框悬浮窗，用于窗口管理器兼容问题 |
 
@@ -125,7 +128,7 @@ Linux 示例：`TRANSLATOR_FRAMELESS=0 ./run.sh`。
 ## 项目文件
 
 - `app.py`：界面、全局快捷键、翻译请求、剪贴板与回填逻辑。
-- `windowing.py`：Windows Win32 和 Linux X11 窗口操作、圆角及 DPI 适配。
+- `windowing.py`：Windows Win32 和 Linux X11 窗口操作、圆角及 DPI 适配；Windows 原生剪贴板与悬浮窗防捕获。
 - `tray.py`：Linux StatusNotifierItem 系统托盘支持。
 - `run.bat` / `run.sh`：创建虚拟环境、安装依赖并启动。
 - `requirements.txt`：跨平台 Python 依赖，Linux 专属依赖按系统自动跳过。

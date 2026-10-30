@@ -29,10 +29,5 @@ if errorlevel 1 (
     )
 )
 
-.venv\Scripts\python.exe app.py
-if errorlevel 1 (
-    echo.
-    echo The application exited with an error. See the error above.
-    pause
-)
+start "" ".venv\Scripts\pythonw.exe" app.py
 endlocal

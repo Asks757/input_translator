@@ -14,12 +14,37 @@ if IS_WINDOWS:
 
     user32.GetForegroundWindow.argtypes = []
     user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
     user32.SetForegroundWindow.argtypes = [wintypes.HWND]
     user32.SetForegroundWindow.restype = wintypes.BOOL
     user32.IsIconic.argtypes = [wintypes.HWND]
     user32.IsIconic.restype = wintypes.BOOL
     user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype = wintypes.HGLOBAL
     user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HANDLE, wintypes.BOOL]
     user32.SetWindowRgn.restype = ctypes.c_int
     user32.SetProcessDPIAware.argtypes = []
@@ -31,6 +56,72 @@ if IS_WINDOWS:
 else:
     from Xlib import X, display, protocol
     from Xlib.ext import shape as xshape
+
+
+def exclude_window_from_capture(window_id):
+    if not IS_WINDOWS:
+        return False
+    try:
+        hwnd = user32.GetAncestor(int(window_id), 2) or int(window_id)
+        return bool(user32.SetWindowDisplayAffinity(hwnd, 0x11))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
+def _open_clipboard():
+    for _ in range(5):
+        if user32.OpenClipboard(None):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def get_clipboard_text():
+    if not IS_WINDOWS or not _open_clipboard():
+        return None
+    try:
+        if not user32.IsClipboardFormatAvailable(13):
+            return None
+        handle = user32.GetClipboardData(13)
+        if not handle:
+            return None
+        pointer = kernel32.GlobalLock(handle)
+        if not pointer:
+            return None
+        try:
+            return ctypes.wstring_at(pointer)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
+
+
+def set_clipboard_text(text):
+    if not IS_WINDOWS:
+        raise OSError("当前平台不支持原生剪贴板接口")
+    if not _open_clipboard():
+        raise OSError("无法打开剪贴板")
+    handle = None
+    try:
+        if not user32.EmptyClipboard():
+            raise ctypes.WinError(ctypes.get_last_error())
+        if text is not None:
+            data = str(text).encode("utf-16le") + b"\0\0"
+            handle = kernel32.GlobalAlloc(0x2000, len(data))
+            if not handle:
+                raise ctypes.WinError(ctypes.get_last_error())
+            pointer = kernel32.GlobalLock(handle)
+            if not pointer:
+                raise ctypes.WinError(ctypes.get_last_error())
+            ctypes.memmove(pointer, data, len(data))
+            kernel32.GlobalUnlock(handle)
+            if not user32.SetClipboardData(13, handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+            handle = None
+    finally:
+        if handle:
+            kernel32.GlobalFree(handle)
+        user32.CloseClipboard()
 
 
 def enable_dpi_awareness():

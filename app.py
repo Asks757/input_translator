@@ -15,16 +15,18 @@ from tkinter import ttk
 
 from pynput import keyboard
 from pynput.keyboard import Key
-from pynput.mouse import Button as MouseButton
-from pynput.mouse import Controller as MouseController
 from windowing import (
     IS_WINDOWS,
     activate_window,
     active_window,
     apply_rounded_window_shape,
     enable_dpi_awareness,
+    exclude_window_from_capture,
     force_focus_window,
+    get_clipboard_text,
     pystray_is_embedded,
+    set_clipboard_text,
+    window_has_focus,
 )
 
 # 托盘图标：pystray / Pillow 属于可选依赖，缺失时程序照常运行，只是不能收进托盘。
@@ -77,7 +79,7 @@ RADIUS_BUTTON = 12
 RADIUS_FIELD = 10
 RADIUS_OVERLAY = 20
 
-DEFAULT_HOTKEY = "<ctrl>+<shift>+f"
+DEFAULT_HOTKEY = "<ctrl>+<shift>+t"
 CHINESE_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 TARGET_LANGUAGE = "English"
 SYSTEM_PROMPT = (
@@ -688,7 +690,6 @@ class TranslatorApp:
         }
         self.hotkey = os.environ.get("TRANSLATOR_HOTKEY", DEFAULT_HOTKEY)
         self.keyboard = keyboard.Controller()
-        self.mouse = MouseController()
 
         saved_key = config.get("api_key")
         if not isinstance(saved_key, str):
@@ -1347,11 +1348,6 @@ class TranslatorApp:
             pad_y=8,
         ).pack(side="right")
 
-        # 点击后重新抢回焦点，避免回填后悬浮窗无法继续输入。
-        overlay.bind("<Button-1>", self._refocus_overlay)
-        self.overlay_canvas.bind("<Button-1>", self._refocus_overlay)
-        self.text.bind("<Button-1>", self._refocus_overlay)
-
         overlay.bind("<Configure>", self._on_overlay_configure)
         # Esc 关闭：绑在 Toplevel 上，焦点落在输入框、滑块、画布上都能响应。
         overlay.bind("<Escape>", self._on_overlay_escape)
@@ -1421,19 +1417,17 @@ class TranslatorApp:
             pass
         overlay.deiconify()
         overlay.update_idletasks()
+        exclude_window_from_capture(str(overlay.winfo_id()))
         # 底部工具栏不能被裁掉：窗口高度按内容实际需要兜底。
         needed = self.overlay_panel.winfo_reqheight() + 4
         if needed > overlay.winfo_height():
             overlay.geometry(f"{width}x{needed}+{x}+{y}")
         overlay.lift()
         overlay.focus_force()
-        self.text.focus_force()
+        self.text.focus_set()
         self.overlay_visible = True
         self.overlay_status.set(self._overlay_hint())
-        # 刚 map 出来的窗口 WM 还不会给焦点，稍等一下再强制抢一次。
         self.root.after(60, self._refocus_overlay)
-        self.root.after(160, self._prime_overlay_focus)
-        self._start_focus_ticker()
 
     def _clear_overlay_input(self):
         """清空输入区：每次呼出悬浮窗都应该是干净的。"""
@@ -1450,56 +1444,15 @@ class TranslatorApp:
         except tk.TclError:
             pass
 
-    def _prime_overlay_focus(self):
-        """无边框窗口光设焦点不够：真实点一下输入区，Tk 的输入法上下文才会收键。"""
-        if not self.overlay_visible:
-            return
-        try:
-            self.mouse.position = (
-                self.overlay.winfo_rootx() + 40,
-                self.overlay.winfo_rooty() + 64,
-            )
-            time.sleep(0.05)
-            self.mouse.click(MouseButton.left, 1)
-            self.text.focus_force()
-        except Exception:
-            pass
-
-    def _start_focus_ticker(self):
-        self._stop_focus_ticker()
-        self._focus_ticker = self.root.after(250, self._keep_overlay_focus)
-
-    def _stop_focus_ticker(self):
-        ticker = getattr(self, "_focus_ticker", None)
-        if ticker is not None:
-            try:
-                self.root.after_cancel(ticker)
-            except tk.TclError:
-                pass
-            self._focus_ticker = None
-
-    def _keep_overlay_focus(self):
-        """无边框窗口会被窗管器判为"非活动"并清掉焦点，这里持续把焦点按回去。"""
-        self._focus_ticker = None
-        if not self.overlay_visible:
-            return
-        try:
-            if self.overlay.focus_get() is not self.text:
-                self.text.focus_force()
-        except tk.TclError:
-            pass
-        self._focus_ticker = self.root.after(250, self._keep_overlay_focus)
-
     def _refocus_overlay(self, _event=None):
         try:
             force_focus_window(str(self.overlay.winfo_id()))
             self.overlay.focus_force()
-            self.text.focus_force()
+            self.text.focus_set()
         except tk.TclError:
             pass
 
     def _hide_overlay(self):
-        self._stop_focus_ticker()
         self.overlay.withdraw()
         self.overlay_visible = False
         self._save_opacity()
@@ -1622,9 +1575,18 @@ class TranslatorApp:
             self._set_clipboard(translated)
             self.overlay_status.set("无法激活原输入框，译文已复制到剪贴板，手动粘贴即可。")
             return
-        self.root.after(200, self._paste_translated, translated)
+        self.root.after(200, self._paste_translated, translated, 0)
 
-    def _paste_translated(self, translated):
+    def _paste_translated(self, translated, activation_attempt=0):
+        if not window_has_focus(self.target_window):
+            if activation_attempt < 2 and activate_window(self.target_window):
+                self.root.after(
+                    150, self._paste_translated, translated, activation_attempt + 1
+                )
+            else:
+                self._set_clipboard(translated)
+                self.overlay_status.set("无法切回原输入框，译文已复制到剪贴板，手动粘贴即可。")
+            return
         try:
             self._release_modifiers()
             self._set_clipboard(translated)
@@ -1707,12 +1669,17 @@ class TranslatorApp:
     # ---------------- 剪贴板 / 按键 ----------------
 
     def _get_clipboard(self):
+        if IS_WINDOWS:
+            return get_clipboard_text()
         try:
             return self.root.clipboard_get()
         except tk.TclError:
             return None
 
     def _set_clipboard(self, text):
+        if IS_WINDOWS:
+            set_clipboard_text(text)
+            return
         self.root.clipboard_clear()
         if text is not None:
             self.root.clipboard_append(text)
@@ -1721,10 +1688,12 @@ class TranslatorApp:
     def _restore_clipboard(self):
         if self.original_clipboard is None:
             return
+        original_clipboard = self.original_clipboard
+        self.original_clipboard = None
         try:
-            self._set_clipboard(self.original_clipboard)
-        except tk.TclError:
-            pass
+            self._set_clipboard(original_clipboard)
+        except (OSError, tk.TclError):
+            self.overlay_status.set("已回填，但原剪贴板内容恢复失败。")
 
     def _release_modifiers(self):
         """Ctrl+Enter 的修饰键可能还按着，先松开再发 Ctrl+V，避免组合成别的快捷键。"""
