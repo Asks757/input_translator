@@ -2,7 +2,7 @@
 
 输入框中译英工具。
 
-一个运行在 Deepin Linux / X11 桌面上的中文输入辅助工具。通过全局快捷键呼出置顶悬浮窗，输入中文并翻译为英文，然后自动粘贴到呼出悬浮窗之前的输入框。
+一个运行在 Windows 和 Deepin Linux / X11 桌面上的中文输入辅助工具。通过全局快捷键呼出置顶悬浮窗，输入中文并翻译为英文，然后自动粘贴到呼出悬浮窗之前的输入框。
 
 ## 功能
 
@@ -15,9 +15,11 @@
 
 ## 运行环境
 
-- Deepin Linux，桌面会话为 **X11**；暂不支持 Wayland。
-- Python 3.10 或更高版本，带 `tkinter` 和 `venv`。
-- 建议安装 `xdotool`，用于更可靠地激活原输入窗口。
+- Windows 10 / 11，或 Deepin Linux 的 **X11** 会话；Linux 暂不支持 Wayland。
+- Python 3.10 或更高版本，带 `tkinter` 和 `venv`。Windows 官方 Python 安装包通常已包含两者。
+- Linux 建议安装 `xdotool`，用于更可靠地激活原输入窗口；Windows 不需要。
+
+Deepin Linux 可安装系统依赖：
 
 ```bash
 sudo apt install python3-venv python3-tk xdotool
@@ -26,14 +28,35 @@ sudo apt install python3-venv python3-tk xdotool
 ## 安装与启动
 
 ```bash
-git clone <你的仓库地址>
+git clone https://github.com/Asks757/input_translator.git
 cd input_translator
+```
+
+Windows 双击 `run.bat`，或在命令提示符中运行：
+
+```bat
+run.bat
+```
+
+Deepin Linux 运行：
+
+```bash
 ./run.sh
 ```
 
-首次启动时，`run.sh` 会创建项目内的 `.venv` 并安装依赖，然后启动程序。
+首次启动时，启动脚本会创建项目内的 `.venv` 并安装依赖，然后启动程序。
 
-也可以手动运行：
+Windows 的 `run.bat` 会优先通过 Python Launcher（`py -3`）查找 Python；不可用时回退到 `python` 命令，因此两者至少有一个可用即可。创建虚拟环境、安装依赖或程序运行失败时，脚本会显示错误并暂停，双击启动也能看到具体原因。
+
+也可以手动运行。Windows：
+
+```bat
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe app.py
+```
+
+Linux：
 
 ```bash
 python3 -m venv .venv
@@ -74,7 +97,7 @@ python3 -m venv .venv
 
 ## 凭据与隐私
 
-勾选“记住 Key”后，凭据会**明文**保存到项目目录下的 `.translator_config.json`，文件权限设为 `600`（仅当前用户可读写）。不勾选时，翻译完成后不会主动保存凭据。
+勾选“记住 Key”后，凭据会**明文**保存到项目目录下的 `.translator_config.json`。Linux 下文件权限设为 `600`（仅当前用户可读写）；Windows 下使用项目目录的 NTFS 访问权限。不勾选时，翻译完成后不会主动保存凭据。
 
 该配置文件、`.env`、虚拟环境和缓存目录均已加入 `.gitignore`，不会随正常 Git 操作提交。请勿手动使用 `git add -f` 强制添加这些文件。
 
@@ -95,19 +118,24 @@ python3 -m venv .venv
 | `TRANSLATOR_START_HIDDEN=1` | 托盘可用时启动即收进托盘 |
 | `TRANSLATOR_FRAMELESS=0` | 禁用无边框悬浮窗，用于窗口管理器兼容问题 |
 
+Windows 命令提示符示例：`set TRANSLATOR_FRAMELESS=0 && run.bat`。
+
+Linux 示例：`TRANSLATOR_FRAMELESS=0 ./run.sh`。
+
 ## 项目文件
 
 - `app.py`：界面、全局快捷键、翻译请求、剪贴板与回填逻辑。
-- `tray.py`：StatusNotifierItem 系统托盘支持。
-- `run.sh`：创建虚拟环境、安装依赖并启动。
-- `requirements.txt`：Python 依赖。
+- `windowing.py`：Windows Win32 和 Linux X11 窗口操作、圆角及 DPI 适配。
+- `tray.py`：Linux StatusNotifierItem 系统托盘支持。
+- `run.bat` / `run.sh`：创建虚拟环境、安装依赖并启动。
+- `requirements.txt`：跨平台 Python 依赖，Linux 专属依赖按系统自动跳过。
 
 ## 常见问题
 
-**快捷键没有反应**：确认当前是 X11 会话，并检查快捷键是否被其他程序占用。
+**快捷键没有反应**：检查快捷键是否被其他程序占用；Linux 还需确认当前是 X11 会话。如果目标程序以管理员身份运行，本工具也需要相同权限才能发送全局按键。
 
-**翻译成功但没有自动回填**：安装 `xdotool` 后重试，或手动粘贴剪贴板中的译文。
+**翻译成功但没有自动回填**：Linux 可安装 `xdotool` 后重试；Windows 请确认工具与目标程序权限一致。也可以手动粘贴剪贴板中的译文。
 
-**悬浮窗显示或焦点异常**：使用 `TRANSLATOR_FRAMELESS=0 ./run.sh` 启动降级模式。
+**悬浮窗显示或焦点异常**：使用上文中的 `TRANSLATOR_FRAMELESS=0` 降级模式启动。
 
 **百度提示签名错误**：检查 `APP ID` 与密钥是否来自同一个应用，且没有多余空格。

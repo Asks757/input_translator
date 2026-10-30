@@ -4,8 +4,6 @@ import math
 import os
 import queue
 import re
-import shutil
-import subprocess
 import threading
 import time
 import tkinter as tk
@@ -19,8 +17,15 @@ from pynput import keyboard
 from pynput.keyboard import Key
 from pynput.mouse import Button as MouseButton
 from pynput.mouse import Controller as MouseController
-from Xlib import X, display, protocol
-from Xlib.ext import shape as xshape
+from windowing import (
+    IS_WINDOWS,
+    activate_window,
+    active_window,
+    apply_rounded_window_shape,
+    enable_dpi_awareness,
+    force_focus_window,
+    pystray_is_embedded,
+)
 
 # 托盘图标：pystray / Pillow 属于可选依赖，缺失时程序照常运行，只是不能收进托盘。
 try:
@@ -33,13 +38,16 @@ except Exception as error:  # pragma: no cover - 取决于运行环境
     Image = ImageDraw = ImageFont = None
     TRAY_IMPORT_ERROR = str(error)
 
-try:
-    import tray as tray_module
-except Exception:  # pragma: no cover
+if not IS_WINDOWS:
+    try:
+        import tray as tray_module
+    except Exception:  # pragma: no cover
+        tray_module = None
+else:
     tray_module = None
 
 
-APP_FONT = "Noto Sans CJK SC"
+APP_FONT = "Microsoft YaHei UI" if IS_WINDOWS else "Noto Sans CJK SC"
 
 # ---- 天蓝配色 ----
 SKY_700 = "#0369A1"
@@ -159,37 +167,6 @@ def rounded_rectangle_points(x1, y1, x2, y2, radius, steps=10):
                 )
             )
     return points
-
-
-def apply_rounded_window_shape(window_id, width, height, radius=RADIUS_OVERLAY):
-    x_display = display.Display()
-    pixmap = None
-    try:
-        pixmap = x_display.screen().root.create_pixmap(width, height, 1)
-        graphics = pixmap.create_gc(foreground=0)
-        pixmap.fill_rectangle(graphics, 0, 0, width, height)
-        graphics.change(foreground=1)
-        pixmap.fill_rectangle(graphics, radius, 0, width - 2 * radius, height)
-        pixmap.fill_rectangle(graphics, 0, radius, width, height - 2 * radius)
-        for x, y, angle in (
-            (0, 0, 90),
-            (width - 2 * radius, 0, 0),
-            (width - 2 * radius, height - 2 * radius, -90),
-            (0, height - 2 * radius, 180),
-        ):
-            pixmap.fill_arc(
-                graphics, x, y, 2 * radius, 2 * radius, angle * 64, 90 * 64
-            )
-        window = x_display.create_resource_object("window", int(window_id))
-        window.mask(xshape.SO.Set, xshape.SK.Bounding, 0, 0, pixmap)
-        x_display.sync()
-        return True
-    except Exception:
-        return False
-    finally:
-        if pixmap is not None:
-            pixmap.free()
-        x_display.close()
 
 
 ROUNDED_FRAMES = []
@@ -628,115 +605,6 @@ def translate_text(
     return content.strip()
 
 
-def active_window():
-    x_display = display.Display()
-    try:
-        atom = x_display.intern_atom("_NET_ACTIVE_WINDOW")
-        property_value = x_display.screen().root.get_full_property(atom, X.AnyPropertyType)
-        if property_value is None or not property_value.value:
-            raise OSError("无法读取当前活动窗口")
-        return str(property_value.value[0])
-    finally:
-        x_display.close()
-
-
-def activate_window(window_id):
-    """把键盘焦点抢回目标窗口，否则 Ctrl+V 会粘到悬浮窗自己身上。"""
-    if not window_id:
-        return False
-    if shutil.which("xdotool"):
-        try:
-            subprocess.run(
-                ["xdotool", "windowactivate", "--sync", str(window_id)],
-                check=True,
-                timeout=5,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return True
-        except (subprocess.SubprocessError, OSError):
-            pass
-    # 没有 xdotool 时退回 EWMH 激活消息。
-    try:
-        x_display = display.Display()
-    except Exception:
-        return False
-    try:
-        window = x_display.create_resource_object("window", int(window_id))
-        atom = x_display.intern_atom("_NET_ACTIVE_WINDOW")
-        event = protocol.event.ClientMessage(
-            window=window,
-            client_type=atom,
-            data=(32, [2, X.CurrentTime, 0, 0, 0]),
-        )
-        x_display.screen().root.send_event(
-            event, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask
-        )
-        x_display.sync()
-        return True
-    except Exception:
-        return False
-    finally:
-        x_display.close()
-
-
-def window_has_focus(window_id):
-    """判断（含子窗口）当前是否真的持有 X 键盘焦点。"""
-    try:
-        x_display = display.Display()
-    except Exception:
-        return True
-    try:
-        focus = x_display.get_input_focus().focus
-        current = getattr(focus, "id", None)
-        target = int(window_id)
-        for _ in range(4):
-            if current is None:
-                return False
-            if int(current) == target:
-                return True
-            parent = x_display.create_resource_object("window", int(current)).query_tree().parent
-            current = getattr(parent, "id", None)
-            if current == x_display.screen().root.id:
-                return False
-        return False
-    except Exception:
-        return True
-    finally:
-        x_display.close()
-
-
-def force_focus_window(window_id):
-    """override-redirect 窗口不受窗管器管理，焦点要自己用 XSetInputFocus 抢。"""
-    if not window_id:
-        return False
-    if shutil.which("xdotool"):
-        try:
-            subprocess.run(
-                ["xdotool", "windowfocus", "--sync", str(window_id)],
-                check=True,
-                timeout=3,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return True
-        except (subprocess.SubprocessError, OSError):
-            pass
-    try:
-        x_display = display.Display()
-    except Exception:
-        return False
-    try:
-        window = x_display.create_resource_object("window", int(window_id))
-        x_display.set_input_focus(window, X.RevertToParent, X.CurrentTime)
-        x_display.sync()
-        return True
-    except Exception:
-        return False
-    finally:
-        x_display.close()
-
-
 def build_tray_image(size=64):
     """画托盘图标：天蓝圆角底 + 白色「译」。没有 Pillow 时返回 None。"""
     if Image is None:
@@ -752,6 +620,8 @@ def build_tray_image(size=64):
     glyph = "译"
     font = None
     for candidate in (
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
@@ -901,7 +771,7 @@ class TranslatorApp:
             self.status.set("未安装 Pillow，无法生成托盘图标。")
             return
 
-        # 首选 StatusNotifierItem：Deepin / KDE / GNOME 扩展都走这套协议。
+        # Linux 首选 StatusNotifierItem；Windows 直接使用下方的 pystray 原生托盘。
         if tray_module is not None and tray_module.DBUS_AVAILABLE:
             pixmaps = []
             for size in (22, 24, 32, 48):
@@ -919,7 +789,11 @@ class TranslatorApp:
                 return
             tray_error = sni.error
         else:
-            tray_error = tray_module.DBUS_IMPORT_ERROR if tray_module else "未安装 dbus-next"
+            tray_error = (
+                tray_module.DBUS_IMPORT_ERROR
+                if tray_module
+                else ("Windows 托盘初始化失败" if IS_WINDOWS else "未安装 dbus-next")
+            )
 
         # dde-dock 只认 SNI，回退到 XEmbed 会得到一个看不见的图标，反而更危险。
         desktop = (os.environ.get("XDG_CURRENT_DESKTOP") or "").lower()
@@ -927,7 +801,7 @@ class TranslatorApp:
             self.status.set(f"托盘注册失败（{tray_error}），关闭窗口将直接退出。")
             return
 
-        # 回退：老的 XEmbed 托盘（Xfce 等），Deepin 的 dde-dock 不支持。
+        # Windows 原生托盘；Linux 上作为 Xfce 等桌面的 XEmbed 回退。
         if pystray is not None:
             menu = pystray.Menu(
                 pystray.MenuItem(
@@ -964,26 +838,7 @@ class TranslatorApp:
         self.status.set(f"当前桌面没有可用的系统托盘（{tray_error}），关闭窗口将直接退出。")
 
     def _pystray_embedded(self, icon, timeout=1.0):
-        """确认图标窗口已被托盘宿主 reparent；没被接管说明图标不可见。"""
-        window = getattr(icon, "_window", None)
-        if window is None:
-            return True
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                x_display = display.Display()
-                try:
-                    parent = x_display.create_resource_object(
-                        "window", window.id
-                    ).query_tree().parent
-                    if parent.id != x_display.screen().root.id:
-                        return True
-                finally:
-                    x_display.close()
-            except Exception:
-                return True
-            time.sleep(0.2)
-        return False
+        return pystray_is_embedded(icon, timeout)
 
     def _run_tray(self):
         try:
@@ -1093,13 +948,6 @@ class TranslatorApp:
             fg=TEXT_PRIMARY,
             font=(APP_FONT, 20, "bold"),
         ).pack(side="left")
-        Pill(
-            header,
-            "X11 · 即时翻译",
-            fill=SKY_100,
-            fg=SKY_700,
-            container_bg=SETTINGS_BG,
-        ).pack(side="right", pady=4)
 
         tk.Label(
             frame,
@@ -1770,7 +1618,10 @@ class TranslatorApp:
             self.overlay_status.set("没找到目标窗口，译文已复制到剪贴板，手动粘贴即可。")
             return
         self.overlay_status.set("正在填入原输入框……")
-        activate_window(self.target_window)
+        if not activate_window(self.target_window):
+            self._set_clipboard(translated)
+            self.overlay_status.set("无法激活原输入框，译文已复制到剪贴板，手动粘贴即可。")
+            return
         self.root.after(200, self._paste_translated, translated)
 
     def _paste_translated(self, translated):
@@ -1909,8 +1760,9 @@ class TranslatorApp:
 
 
 if __name__ == "__main__":
-    if os.environ.get("XDG_SESSION_TYPE", "x11").lower() != "x11":
-        raise SystemExit("当前仅支持 X11 桌面。")
+    if not IS_WINDOWS and os.environ.get("XDG_SESSION_TYPE", "x11").lower() != "x11":
+        raise SystemExit("Linux 当前仅支持 X11 桌面。")
+    enable_dpi_awareness()
     root = tk.Tk()
     TranslatorApp(root)
     root.mainloop()
