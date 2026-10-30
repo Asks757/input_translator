@@ -1,0 +1,6 @@
+pynput>=1.7,<2
+python-xlib>=0.33
+pillow>=10
+dbus-next>=0.2.3
+# 可选：老式 XEmbed 托盘（Xfce 等）的兜底，Deepin/KDE 用不上
+pystray>=0.19
