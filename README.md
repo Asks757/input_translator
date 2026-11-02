@@ -132,6 +132,7 @@ Linux 示例：`TRANSLATOR_FRAMELESS=0 ./run.sh`。
 - `tray.py`：Linux StatusNotifierItem 系统托盘支持。
 - `run.bat` / `run.sh`：创建虚拟环境、安装依赖并启动。
 - `requirements.txt`：跨平台 Python 依赖，Linux 专属依赖按系统自动跳过。
+- `icon-64.png`：64×64 PNG 图标资源；当前托盘图标仍由程序动态生成。
 
 ## 常见问题
 
